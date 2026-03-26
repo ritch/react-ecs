@@ -42,9 +42,11 @@ export function World({ children }: { children: ReactNode }) {
 export function Entity({
   name,
   children,
+  onDestroy: onDestroyProp,
 }: {
   name?: string;
   children?: ReactNode;
+  onDestroy?: () => void;
 }) {
   const world = useContext(WorldContext);
   if (!world) throw new Error('<Entity> must be inside <World>');
@@ -56,7 +58,6 @@ export function Entity({
   const entity = entityRef.current;
 
   useEffect(() => {
-    // Re-register on StrictMode remount (entity object + component data persists via ref)
     entity.alive = true;
     world.entities.set(entity.id, entity);
     return () => {
@@ -64,6 +65,10 @@ export function Entity({
       world.entities.delete(entity.id);
     };
   }, [entity, world]);
+
+  useEffect(() => {
+    if (onDestroyProp) return entity.onDestroy(onDestroyProp);
+  }, [entity, onDestroyProp]);
 
   return (
     <EntityContext.Provider value={entity}>{children}</EntityContext.Provider>
@@ -189,4 +194,44 @@ export function useEntityLifecycle(hooks: {
     ref.current.onInit?.();
     return () => ref.current.onDestroy?.();
   }, []);
+}
+
+// --- Behavior ---
+
+export function Behavior({
+  onTick,
+  priority,
+}: {
+  onTick: (dt: number, entity: EntityInstance) => void;
+  priority?: number;
+}) {
+  const entity = useContext(EntityContext);
+  if (!entity) throw new Error('<Behavior> must be inside <Entity>');
+  const ref = useRef(onTick);
+  ref.current = onTick;
+  useSystem((dt) => {
+    if (entity.alive) ref.current(dt, entity);
+  }, { priority });
+  return null;
+}
+
+// --- Component lifecycle ---
+
+export function useComponentLifecycle(
+  type: unknown,
+  hooks: {
+    onAdd?: (entity: EntityInstance, data?: Record<string, unknown>) => void;
+    onRemove?: (entity: EntityInstance) => void;
+  },
+): void {
+  const world = useWorld();
+  const ref = useRef(hooks);
+  ref.current = hooks;
+
+  useEffect(() => {
+    const cleanups: (() => void)[] = [];
+    cleanups.push(world.onComponentAdd(type, (e, d) => ref.current.onAdd?.(e, d)));
+    cleanups.push(world.onComponentRemove(type, (e) => ref.current.onRemove?.(e)));
+    return () => cleanups.forEach(fn => fn());
+  }, [world, type]);
 }

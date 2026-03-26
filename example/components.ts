@@ -1,4 +1,4 @@
-import { defineComponent } from '../src';
+import { defineComponent, defineEvent } from '../src';
 
 export const WIDTH = 900;
 export const HEIGHT = 600;
@@ -69,3 +69,19 @@ export const PRED_LUNGE_SPEED = 130;
 export const MAX_HERBIVORES = 80;
 export const MAX_PREDATORS = 20;
 export const MAX_PLANTS = 80;
+
+// Events
+export const SpawnCreature = defineEvent<{
+  kind: 'herbivore' | 'predator';
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  energy: number;
+  maxEnergy: number;
+  drainRate: number;
+}>({
+  kind: 'herbivore',
+  x: 0, y: 0, vx: 0, vy: 0,
+  energy: 50, maxEnergy: 100, drainRate: 3,
+});

@@ -108,6 +108,7 @@ export class EntityInstance {
   readonly components = new Map<number, Record<string, unknown>>();
   readonly world: WorldInstance;
   alive = true;
+  private _destroyCallbacks = new Set<() => void>();
 
   constructor(world: WorldInstance, id: number, name?: string) {
     this.world = world;
@@ -124,10 +125,15 @@ export class EntityInstance {
       if (Array.isArray(v)) merged[key] = [...v];
     }
     this.components.set(cid, merged);
+    this.world._fireComponentHook('add', this, cid, merged);
   }
 
   remove(type: unknown): void {
-    this.components.delete(getComponentId(type));
+    const cid = getComponentId(type);
+    if (this.components.has(cid)) {
+      this.world._fireComponentHook('remove', this, cid);
+      this.components.delete(cid);
+    }
   }
 
   get<T = Record<string, unknown>>(type: unknown): T {
@@ -138,9 +144,19 @@ export class EntityInstance {
     return this.components.has(getComponentId(type));
   }
 
+  onDestroy(cb: () => void): () => void {
+    this._destroyCallbacks.add(cb);
+    return () => { this._destroyCallbacks.delete(cb); };
+  }
+
   destroy(): void {
     if (!this.alive) return;
     this.alive = false;
+    for (const cb of this._destroyCallbacks) cb();
+    this._destroyCallbacks.clear();
+    for (const cid of this.components.keys()) {
+      this.world._fireComponentHook('remove', this, cid);
+    }
     this.world._markForDestruction(this);
   }
 }
@@ -160,6 +176,8 @@ interface SystemEntry {
   priority: number;
 }
 
+type ComponentHookFn = (entity: EntityInstance, data?: Record<string, unknown>) => void;
+
 export class WorldInstance {
   readonly entities = new Map<number, EntityInstance>();
   private systems: SystemEntry[] = [];
@@ -172,6 +190,29 @@ export class WorldInstance {
   private rafId: number | null = null;
   private lastTime: number | null = null;
   readonly events = new EventBus();
+  private _componentHooks = new Map<number, { add: Set<ComponentHookFn>; remove: Set<ComponentHookFn> }>();
+
+  onComponentAdd(type: unknown, cb: ComponentHookFn): () => void {
+    const cid = getComponentId(type);
+    let hooks = this._componentHooks.get(cid);
+    if (!hooks) { hooks = { add: new Set(), remove: new Set() }; this._componentHooks.set(cid, hooks); }
+    hooks.add.add(cb);
+    return () => { hooks!.add.delete(cb); };
+  }
+
+  onComponentRemove(type: unknown, cb: ComponentHookFn): () => void {
+    const cid = getComponentId(type);
+    let hooks = this._componentHooks.get(cid);
+    if (!hooks) { hooks = { add: new Set(), remove: new Set() }; this._componentHooks.set(cid, hooks); }
+    hooks.remove.add(cb);
+    return () => { hooks!.remove.delete(cb); };
+  }
+
+  _fireComponentHook(kind: 'add' | 'remove', entity: EntityInstance, cid: number, data?: Record<string, unknown>): void {
+    const hooks = this._componentHooks.get(cid);
+    if (!hooks) return;
+    for (const cb of hooks[kind]) cb(entity, data);
+  }
 
   createEntity(name?: string): EntityInstance {
     const entity = new EntityInstance(this, this.nextEntityId++, name);

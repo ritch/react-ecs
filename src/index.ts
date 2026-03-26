@@ -15,6 +15,7 @@ export {
   World,
   Entity,
   Component,
+  Behavior,
   useWorld,
   useEntity,
   useSystem,
@@ -24,5 +25,6 @@ export {
   useEvent,
   useEventListener,
   useEntityLifecycle,
+  useComponentLifecycle,
   type SpawnDescriptor,
 } from './react';

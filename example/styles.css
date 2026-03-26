@@ -40,6 +40,56 @@ canvas {
   border: 1px solid rgba(255, 255, 255, 0.06);
 }
 
+.view-tabs {
+  display: flex;
+  gap: 2px;
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 8px;
+  padding: 3px;
+}
+
+.view-tab {
+  padding: 6px 20px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: #666;
+  font-size: 0.82rem;
+  font-weight: 500;
+  font-family: inherit;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  letter-spacing: 0.04em;
+}
+
+.view-tab:hover {
+  color: #aaa;
+}
+
+.view-tab.active {
+  background: rgba(255, 255, 255, 0.08);
+  color: #eee;
+}
+
+.hud-overlay {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background: rgba(0, 0, 0, 0.55);
+  border-radius: 6px;
+  padding: 8px 12px;
+  font: 11px/1.4 monospace;
+  pointer-events: none;
+}
+
+.hud-herb { color: rgba(70, 160, 255, 0.9); }
+.hud-pred { color: rgba(240, 70, 70, 0.9); }
+.hud-plant { color: rgba(50, 170, 50, 0.9); }
+.hud-total { color: rgba(255, 255, 255, 0.4); }
+
 .hint {
   font-size: 0.78rem;
   color: #555;
