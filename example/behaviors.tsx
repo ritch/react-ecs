@@ -6,7 +6,7 @@
 // ---------------------------------------------------------------------------
 
 import { useRef } from 'react';
-import { useEntity, useWorld, useEvent, useSystem } from '../src';
+import { useEntity, useWorld, useEvent, useSystem, Phase } from '../src';
 import {
   Transform, Velocity, Energy, Wander,
   Herbivore, Predator, Plant,
@@ -132,7 +132,7 @@ export function HerbivoreSteering() {
 
     const speed = nearestPredDist < HERB_FEAR_RADIUS ? HERB_MAX_SPEED * 1.3 : HERB_MAX_SPEED;
     [v.x, v.y] = clampSpeed(v.x, v.y, speed);
-  }, { priority: 0 });
+  }, { phase: Phase.Simulation });
 
   return null;
 }
@@ -198,7 +198,7 @@ export function PredatorSteering() {
 
     const speed = nearestDist < 60 ? PRED_LUNGE_SPEED : PRED_MAX_SPEED;
     [v.x, v.y] = clampSpeed(v.x, v.y, speed);
-  }, { priority: 0 });
+  }, { phase: Phase.Simulation });
 
   return null;
 }
@@ -216,7 +216,7 @@ export function EnergyBehavior() {
     const speed = mag(v.x, v.y);
     e.current -= (e.drainRate + speed * 0.01) * dt;
     if (e.current <= 0) entity.destroy();
-  }, { priority: 30 });
+  }, { phase: Phase.PostSimulation });
 
   return null;
 }
@@ -261,7 +261,7 @@ export function ReproductionBehavior({ kind }: { kind: 'herbivore' | 'predator' 
       maxEnergy: e.max,
       drainRate: e.drainRate,
     });
-  }, { priority: 40 });
+  }, { phase: Phase.PostSimulation });
 
   return null;
 }

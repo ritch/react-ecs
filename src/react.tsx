@@ -15,6 +15,7 @@ import {
 import {
   WorldInstance,
   EntityInstance,
+  Phase,
   type QueryFilter,
   type EventDef,
 } from './core';
@@ -113,12 +114,12 @@ function useFrameTick(world: WorldInstance): void {
 
 export function useSystem(
   callback: (dt: number) => void,
-  opts?: { priority?: number },
+  opts?: { phase?: number; priority?: number },
 ): void {
   const world = useWorld();
   const ref = useRef(callback);
   ref.current = callback;
-  const priority = opts?.priority ?? 0;
+  const priority = opts?.priority ?? opts?.phase ?? Phase.Simulation;
 
   useEffect(() => {
     return world.registerSystem((dt) => ref.current(dt), priority);
@@ -200,9 +201,11 @@ export function useEntityLifecycle(hooks: {
 
 export function Behavior({
   onTick,
+  phase,
   priority,
 }: {
   onTick: (dt: number, entity: EntityInstance) => void;
+  phase?: number;
   priority?: number;
 }) {
   const entity = useContext(EntityContext);
@@ -211,7 +214,7 @@ export function Behavior({
   ref.current = onTick;
   useSystem((dt) => {
     if (entity.alive) ref.current(dt, entity);
-  }, { priority });
+  }, { phase, priority });
   return null;
 }
 

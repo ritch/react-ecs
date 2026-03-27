@@ -5,7 +5,7 @@
 // ---------------------------------------------------------------------------
 
 import { useRef } from 'react';
-import { useSystem, useWorld, useSpawn } from '../src';
+import { useSystem, useWorld, useSpawn, Phase } from '../src';
 import {
   Transform, Velocity, Lifetime,
   Plant,
@@ -44,7 +44,7 @@ export function PlantGrowthSystem() {
         ],
       });
     }
-  }, { priority: -20 });
+  }, { phase: Phase.Spawn });
 
   return null;
 }
@@ -61,7 +61,7 @@ export function MovementSystem() {
       t.x += v.x * dt;
       t.y += v.y * dt;
     }
-  }, { priority: 10 });
+  }, { phase: Phase.Simulation });
 
   return null;
 }
@@ -77,7 +77,7 @@ export function WrapBoundsSystem() {
       t.x = wrapCoord(t.x, WIDTH);
       t.y = wrapCoord(t.y, HEIGHT);
     }
-  }, { priority: 15 });
+  }, { phase: Phase.Simulation });
 
   return null;
 }
@@ -130,7 +130,7 @@ export function EatingSystem() {
         }
       }
     }
-  }, { priority: 20 });
+  }, { phase: Phase.Simulation });
 
   return null;
 }
@@ -151,7 +151,7 @@ export function LifetimeSystem() {
       lt.remaining -= dt;
       if (lt.remaining <= 0) entity.destroy();
     }
-  }, { priority: 100 });
+  }, { phase: Phase.Cleanup });
 
   return null;
 }

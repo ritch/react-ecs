@@ -4,7 +4,7 @@ A React hook-based Entity Component System inspired by Unreal Engine's architect
 
 ## Overview
 
-Unreal Engine's core architecture separates **entities** (actors), **components** (data + behavior), and **systems** (world-level logic that processes groups of entities). `react-ecs` brings this pattern into React, letting you define game worlds declaratively and drive them with hooks.
+Unreal Engine's core architecture separates **entities** (actors), **components** (data), **behaviors** (per-entity logic, like Blueprints), and **systems** (world-level logic that processes groups of entities). `react-ecs` brings this pattern into React, letting you define game worlds declaratively and drive them with hooks.
 
 ```
 World
@@ -12,16 +12,18 @@ World
  │    ├── Transform { position, rotation, scale }
  │    ├── Velocity { x, y, z }
  │    ├── Health { current, max }
- │    └── PlayerInput {}
+ │    ├── PlayerInput {}
+ │    └── PlayerBehavior              ← per-entity logic (like a Blueprint)
  ├── Entity (Enemy)
  │    ├── Transform { position, rotation, scale }
  │    ├── Velocity { x, y, z }
  │    ├── Health { current, max }
- │    └── AIController { state }
- └── Systems
+ │    ├── AIController { state }
+ │    └── EnemyBehavior               ← unique AI per entity type
+ └── Systems (batch)
       ├── MovementSystem  → queries [Transform, Velocity]
       ├── DamageSystem    → queries [Health]
-      └── AISystem        → queries [AIController, Transform]
+      └── LifetimeSystem  → queries [Lifetime]
 ```
 
 ## Install
@@ -32,24 +34,29 @@ npm install react-ecs
 
 ## Core Concepts
 
-| Concept       | Unreal Engine Equivalent | react-ecs Hook        |
-|---------------|------------------------|-----------------------|
-| World         | UWorld                 | `<World>`             |
-| Entity        | AActor                 | `<Entity>`            |
-| Component     | UActorComponent        | `<Component>`         |
-| System        | Tick / Subsystem       | `useSystem()`         |
-| Query         | TActorIterator         | `useQuery()`          |
-| Facet (view)  | Component pointer      | `useFacet()`          |
+| Concept              | Unreal Engine Equivalent  | react-ecs                   |
+|----------------------|---------------------------|-----------------------------|
+| World                | UWorld                    | `<World>`                   |
+| Entity               | AActor                    | `<Entity>`                  |
+| Component            | UActorComponent (data)    | `<Component>`               |
+| Behavior             | Blueprint Event Graph     | `<Behavior>` / custom component |
+| System               | Tick / Subsystem          | `useSystem()`               |
+| Phase                | Tick Group                | `Phase.Simulation`, etc.    |
+| Query                | TActorIterator            | `useQuery()`                |
+| Facet (view)         | Component pointer         | `useFacet()`                |
+| Component lifecycle  | OnComponentCreated        | `useComponentLifecycle()`   |
+| Entity destroy       | EndPlay                   | `<Entity onDestroy={...}>`  |
 
 ## Quick Start
 
 ```tsx
-import { World, Entity, Component, useSystem, useQuery } from 'react-ecs';
+import { World, Entity, Component, Behavior, useSystem, useQuery, useEntity } from 'react-ecs';
 
 // Define component schemas as plain objects
 const Transform = { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] };
 const Velocity = { x: 0, y: 0, z: 0 };
 
+// Batch system — runs once per frame, processes ALL matching entities
 function MovementSystem() {
   const entities = useQuery([Transform, Velocity]);
 
@@ -66,6 +73,20 @@ function MovementSystem() {
   return null;
 }
 
+// Per-entity behavior — runs in the context of ONE entity (like a Blueprint)
+function BounceAtEdge() {
+  const entity = useEntity();
+
+  useSystem((dt) => {
+    if (!entity?.alive) return;
+    const t = entity.get(Transform);
+    const v = entity.get(Velocity);
+    if (t.position[0] > 10 || t.position[0] < -10) v.x *= -1;
+  });
+
+  return null;
+}
+
 function Game() {
   return (
     <World>
@@ -74,6 +95,7 @@ function Game() {
       <Entity>
         <Component type={Transform} />
         <Component type={Velocity} data={{ x: 5, y: 0, z: 0 }} />
+        <BounceAtEdge />
       </Entity>
     </World>
   );
@@ -121,7 +143,7 @@ const RigidBody = defineComponent({
 
 ## Building Entities
 
-Compose entities declaratively by nesting `<Component>` elements inside `<Entity>`.
+Compose entities declaratively by nesting `<Component>` elements and behaviors inside `<Entity>`. This is the react-ecs equivalent of a Blueprint — data and logic defined together as a reusable template.
 
 ```tsx
 function Player({ spawn }) {
@@ -132,25 +154,27 @@ function Player({ spawn }) {
       <Component type={Health} data={{ current: 100, max: 100 }} />
       <Component type={PlayerInput} />
       <Component type={Tag_Player} />
+
+      {/* Per-entity behaviors — composable like Blueprint nodes */}
+      <PlayerMovement />
+      <HealthRegen rate={5} />
     </Entity>
   );
 }
 
-function EnemyWave({ count, origin }) {
+function EnemyEntity({ position, onDestroy }) {
   return (
-    <>
-      {Array.from({ length: count }, (_, i) => (
-        <Entity key={i} name={`Enemy_${i}`}>
-          <Component type={Transform} data={{
-            position: [origin[0] + i * 2, origin[1], origin[2]],
-          }} />
-          <Component type={RigidBody} />
-          <Component type={Health} data={{ current: 50, max: 50 }} />
-          <Component type={AIController} data={{ state: 'patrol' }} />
-          <Component type={Tag_Enemy} />
-        </Entity>
-      ))}
-    </>
+    <Entity name="Enemy" onDestroy={onDestroy}>
+      <Component type={Transform} data={{ position }} />
+      <Component type={RigidBody} />
+      <Component type={Health} data={{ current: 50, max: 50 }} />
+      <Component type={AIController} data={{ state: 'patrol' }} />
+      <Component type={Tag_Enemy} />
+
+      {/* Each enemy has its own AI behavior */}
+      <EnemyAI />
+      <DeathDrop lootTable="common" />
+    </Entity>
   );
 }
 ```
@@ -213,16 +237,116 @@ function AISystem() {
 }
 ```
 
-### System Priority
+### Phases
 
-Control execution order with `priority` (lower runs first), similar to Unreal's tick groups.
+Control execution order with named phases, similar to Unreal's tick groups. Every system and behavior declares which phase it runs in.
 
 ```tsx
-// Physics runs before rendering
-useSystem((dt) => { /* physics step */ }, { priority: 0 });
-useSystem((dt) => { /* animation update */ }, { priority: 10 });
-useSystem((dt) => { /* vfx update */ }, { priority: 20 });
+import { Phase } from 'react-ecs';
+
+useSystem((dt) => { /* spawn entities */ },  { phase: Phase.Spawn });
+useSystem((dt) => { /* physics + AI */ },    { phase: Phase.Simulation });
+useSystem((dt) => { /* energy, scoring */ },  { phase: Phase.PostSimulation });
+useSystem((dt) => { /* draw frame */ },       { phase: Phase.Render });
+useSystem((dt) => { /* destroy dead */ },     { phase: Phase.Cleanup });
 ```
+
+The built-in phases execute in this order each frame:
+
+| Phase | Purpose |
+|---|---|
+| `Phase.Input` | Capture input, poll controllers |
+| `Phase.Spawn` | Create new entities |
+| `Phase.Simulation` | AI, physics, movement — the main game logic |
+| `Phase.PostSimulation` | Energy drain, scoring, anything that reacts to simulation results |
+| `Phase.Render` | Draw the frame |
+| `Phase.Cleanup` | Destroy expired entities, flush events |
+
+Systems default to `Phase.Simulation` if no phase is specified. Phases are just numbers under the hood, so you can use a raw `priority` value as an escape hatch if needed.
+
+## Per-Entity Behaviors
+
+Behaviors are React components nested inside an `<Entity>` that run logic each frame in the context of *that single entity* — the equivalent of an Unreal Blueprint Event Graph. Use them for entity-specific logic like AI, special abilities, or unique interactions.
+
+### Inline with `<Behavior>`
+
+For quick one-off logic, use the `<Behavior>` component directly:
+
+```tsx
+<Entity name="Spinner">
+  <Component type={Transform} data={{ rotation: 0 }} />
+  <Behavior onTick={(dt, entity) => {
+    const t = entity.get(Transform);
+    t.rotation += 90 * dt;
+  }} />
+</Entity>
+```
+
+### Named Behavior Components
+
+For reusable logic, write a React component that uses `useEntity()` and `useSystem()`:
+
+```tsx
+function EnemyAI() {
+  const entity = useEntity();
+  const world = useWorld();
+
+  useSystem((dt) => {
+    if (!entity.alive) return;
+
+    const ai = entity.get(AIController);
+    const t = entity.get(Transform);
+    const players = world.query([Tag_Player, Transform]);
+
+    const nearest = findNearest(t.position, players);
+    if (!nearest) { ai.state = 'patrol'; return; }
+
+    const dist = distance(t.position, nearest.get(Transform).position);
+    ai.state = dist < 5 ? 'attack' : dist < 20 ? 'chase' : 'patrol';
+
+    switch (ai.state) {
+      case 'chase': moveToward(t, nearest.get(Transform), 8 * dt); break;
+      case 'attack': attackTarget(entity, nearest); break;
+      case 'patrol': wander(t, dt); break;
+    }
+  });
+
+  return null;
+}
+```
+
+### Composing Multiple Behaviors
+
+Mix and match behaviors on a single entity, just like stacking Blueprint components:
+
+```tsx
+function BossEnemy({ position, onDestroy }) {
+  return (
+    <Entity name="Boss" onDestroy={onDestroy}>
+      <Component type={Transform} data={{ position }} />
+      <Component type={Health} data={{ current: 500, max: 500 }} />
+      <Component type={Tag_Enemy} />
+
+      {/* Each behavior is independent and composable */}
+      <EnemyAI />
+      <EnrageAtLowHealth threshold={0.25} speedBoost={2.0} />
+      <SpawnMinions interval={10} />
+      <DropLoot table="legendary" />
+    </Entity>
+  );
+}
+```
+
+### Behaviors vs Systems: When to Use Each
+
+| Use a **System** when... | Use a **Behavior** when... |
+|---|---|
+| Logic applies uniformly to many entities | Logic is unique to one entity type |
+| Performance matters (single pass over all entities) | Entity needs its own state machine |
+| No per-entity branching needed | You want to compose/swap logic per entity |
+| Example: `MovementSystem`, `LifetimeSystem` | Example: `BossAI`, `PlayerAbilities` |
+
+Both patterns coexist — use systems for the common case and behaviors for the special cases.
 
 ## Reading Component Data with `useFacet`
 
@@ -289,7 +413,47 @@ function DamageReceiver() {
 }
 ```
 
+## Component Lifecycle Hooks
+
+React to components being added or removed from any entity — similar to Unreal's `OnComponentCreated` and `OnComponentDestroyed`.
+
+```tsx
+import { useComponentLifecycle } from 'react-ecs';
+
+function DamageFlashSystem() {
+  useComponentLifecycle(Health, {
+    onAdd: (entity, data) => {
+      // Entity just gained a Health component — register with damage manager
+      console.log(`${entity.name} is now damageable (${data.current} HP)`);
+    },
+    onRemove: (entity) => {
+      // Health removed — play death effect, clean up references
+      spawnDeathParticles(entity);
+    },
+  });
+
+  return null;
+}
+```
+
+This is also useful for maintaining indices or counters without querying every frame:
+
+```tsx
+function PopulationTracker() {
+  const counts = useRef({ enemies: 0, allies: 0 });
+
+  useComponentLifecycle(Tag_Enemy, {
+    onAdd: () => { counts.current.enemies++; },
+    onRemove: () => { counts.current.enemies--; },
+  });
+
+  return null;
+}
+```
+
 ## Dynamic Entity Spawning with `useSpawn`
+
+`useSpawn` creates entities imperatively — useful for projectiles, particles, and other transient objects that don't need per-entity behaviors.
 
 ```tsx
 function WeaponSystem() {
@@ -301,14 +465,15 @@ function WeaponSystem() {
       const input = player.get(PlayerInput);
       if (input.fire) {
         const pos = player.get(Transform).position;
-        spawn(
-          <Entity name="Bullet">
-            <Component type={Transform} data={{ position: [...pos] }} />
-            <Component type={Velocity} data={{ x: 0, y: 0, z: 50 }} />
-            <Component type={Lifetime} data={{ remaining: 2.0 }} />
-            <Component type={Damage} data={{ amount: 25 }} />
-          </Entity>
-        );
+        spawn({
+          name: 'Bullet',
+          components: [
+            [Transform, { position: [...pos] }],
+            [Velocity, { x: 0, y: 0, z: 50 }],
+            [Lifetime, { remaining: 2.0 }],
+            [Damage, { amount: 25 }],
+          ],
+        });
       }
     }
   });
@@ -317,26 +482,45 @@ function WeaponSystem() {
 }
 ```
 
+For entities that need behaviors (AI, reproduction, etc.), use React-managed state + event-driven spawning instead — see the ecosystem demo for an example of this pattern.
+
 ## Entity Lifecycle
 
-Hooks for mount and unmount, similar to Unreal's `BeginPlay` and `EndPlay`.
+### `onDestroy` Prop
+
+The `<Entity>` component accepts an `onDestroy` callback that fires when the entity is destroyed at the ECS level (via `entity.destroy()`). This is how you bridge ECS destruction back into React state — for example, removing a dynamically managed entity from a list:
+
+```tsx
+function CreatureManager() {
+  const [creatures, setCreatures] = useState(initialCreatures);
+
+  const remove = useCallback((id) => {
+    setCreatures(prev => prev.filter(c => c.id !== id));
+  }, []);
+
+  return creatures.map(c => (
+    <Entity key={c.id} name={c.name} onDestroy={() => remove(c.id)}>
+      <Component type={Health} data={{ current: c.hp, max: c.hp }} />
+      <EnemyAI />
+    </Entity>
+  ));
+}
+```
+
+### `useEntityLifecycle`
+
+For `BeginPlay` / `EndPlay` style hooks inside an entity's children:
 
 ```tsx
 import { useEntityLifecycle } from 'react-ecs';
 
-function ExplosionOnDeath() {
-  const transform = useFacet(Transform);
-  const spawn = useSpawn();
-
+function AmbientSound() {
   useEntityLifecycle({
+    onInit: () => {
+      audioManager.play('ambient_hum', { loop: true });
+    },
     onDestroy: () => {
-      spawn(
-        <Entity name="Explosion_VFX">
-          <Component type={Transform} data={{ position: [...transform.position] }} />
-          <Component type={ParticleEmitter} data={{ effect: 'explosion', duration: 1.5 }} />
-          <Component type={Lifetime} data={{ remaining: 1.5 }} />
-        </Entity>
-      );
+      audioManager.stop('ambient_hum');
     },
   });
 
@@ -347,10 +531,11 @@ function ExplosionOnDeath() {
 ## Full Example: Top-Down Shooter
 
 ```tsx
+import { useState } from 'react';
 import {
-  World, Entity, Component,
-  useSystem, useQuery, useSpawn, useFacet,
-  defineComponent,
+  World, Entity, Component, Behavior,
+  useSystem, useQuery, useSpawn, useFacet, useEntity,
+  defineComponent, Phase,
 } from 'react-ecs';
 
 // --- Components ---
@@ -375,7 +560,7 @@ function InputSystem() {
       input.dy = (keys.w ? 1 : 0) - (keys.s ? 1 : 0);
       input.fire = keys.space;
     }
-  }, { priority: -10 });
+  }, { phase: Phase.Input });
 
   return null;
 }
@@ -390,7 +575,7 @@ function MovementSystem() {
       t.position[0] += v.x * dt;
       t.position[1] += v.y * dt;
     }
-  }, { priority: 0 });
+  }, { phase: Phase.Simulation });
 
   return null;
 }
@@ -404,17 +589,18 @@ function ShootingSystem() {
       const input = player.get(PlayerInput);
       if (input.fire) {
         const pos = player.get(Transform).position;
-        spawn(
-          <Entity>
-            <Component type={Transform} data={{ position: [pos[0], pos[1], 0] }} />
-            <Component type={Velocity} data={{ x: 0, y: 20 }} />
-            <Component type={Lifetime} data={{ remaining: 2 }} />
-            <Component type={Bullet} />
-          </Entity>
-        );
+        spawn({
+          name: 'Bullet',
+          components: [
+            [Transform, { position: [pos[0], pos[1], 0] }],
+            [Velocity, { x: 0, y: 20 }],
+            [Lifetime, { remaining: 2 }],
+            [Bullet, undefined],
+          ],
+        });
       }
     }
-  }, { priority: 5 });
+  }, { phase: Phase.Simulation });
 
   return null;
 }
@@ -430,7 +616,7 @@ function LifetimeSystem() {
         entity.destroy();
       }
     }
-  }, { priority: 100 });
+  }, { phase: Phase.Cleanup });
 
   return null;
 }
@@ -454,7 +640,7 @@ function CollisionSystem() {
         }
       }
     }
-  }, { priority: 50 });
+  }, { phase: Phase.Simulation });
 
   return null;
 }
@@ -483,37 +669,78 @@ function SpriteRenderer() {
   );
 }
 
+// --- Per-entity behavior (the "Blueprint" equivalent) ---
+function EnemyDriftAI() {
+  const entity = useEntity();
+
+  useSystem((dt) => {
+    if (!entity?.alive) return;
+    const t = entity.get(Transform);
+    const v = entity.get(Velocity);
+    // Drift downward; reverse when hitting edges
+    t.position[1] += v.y * dt;
+    if (t.position[1] < -15) v.y = Math.abs(v.y);
+    if (t.position[1] > 15) v.y = -Math.abs(v.y);
+    // Slight horizontal sway
+    t.position[0] += Math.sin(Date.now() / 1000 + entity.id) * 2 * dt;
+  });
+
+  return null;
+}
+
+// --- Entity template — data + behaviors composed together ---
+function EnemyEntity({ x, y, onDestroy }) {
+  return (
+    <Entity name="Enemy" onDestroy={onDestroy}>
+      <Component type={Transform} data={{ position: [x, y, 0] }} />
+      <Component type={Velocity} data={{ x: 0, y: -1 }} />
+      <Component type={Health} data={{ current: 50, max: 50 }} />
+      <Component type={Tag_Enemy} />
+      <EnemyDriftAI />
+    </Entity>
+  );
+}
+
 // --- Game ---
 function TopDownShooter() {
+  const [enemies, setEnemies] = useState(
+    () => Array.from({ length: 5 }, (_, i) => ({ id: i, x: -8 + i * 4, y: 10 })),
+  );
+
   return (
     <World>
-      {/* Systems */}
+      {/* Batch systems — apply to all matching entities */}
       <InputSystem />
       <MovementSystem />
       <ShootingSystem />
       <CollisionSystem />
       <LifetimeSystem />
 
-      {/* Player */}
+      {/* Player — inline behavior via <Behavior> */}
       <Entity name="Player">
         <Component type={Transform} data={{ position: [0, -10, 0] }} />
         <Component type={Velocity} data={{ x: 0, y: 0 }} />
         <Component type={Health} />
         <Component type={PlayerInput} />
         <Component type={Tag_Player} />
+        <Behavior onTick={(dt, self) => {
+          const input = self.get(PlayerInput);
+          const v = self.get(Velocity);
+          v.x = input.dx * 15;
+          v.y = input.dy * 15;
+        }} />
       </Entity>
 
-      {/* Enemies */}
-      {Array.from({ length: 5 }, (_, i) => (
-        <Entity key={i} name={`Enemy_${i}`}>
-          <Component type={Transform} data={{ position: [-8 + i * 4, 10, 0] }} />
-          <Component type={Velocity} data={{ x: 0, y: -1 }} />
-          <Component type={Health} data={{ current: 50, max: 50 }} />
-          <Component type={Tag_Enemy} />
-        </Entity>
+      {/* Enemies — each with its own behavior + destroy callback */}
+      {enemies.map(e => (
+        <EnemyEntity
+          key={e.id}
+          x={e.x}
+          y={e.y}
+          onDestroy={() => setEnemies(prev => prev.filter(en => en.id !== e.id))}
+        />
       ))}
 
-      {/* Rendering */}
       <SpriteRenderer />
     </World>
   );
@@ -529,21 +756,30 @@ export default TopDownShooter;
 | Export | Description |
 |---|---|
 | `<World>` | Root provider. Creates the ECS world and runs the game loop. |
-| `<Entity name?>` | Declares an entity. Automatically registered/unregistered on mount/unmount. |
+| `<Entity name? onDestroy?>` | Declares an entity. `onDestroy` fires when the entity is destroyed via ECS. |
 | `<Component type data?>` | Attaches a component to the parent `<Entity>`. |
+| `<Behavior onTick phase?>` | Runs per-entity logic each frame. `onTick(dt, entity)` receives delta time and the entity. |
 
 ### Hooks
 
 | Hook | Description |
 |---|---|
-| `useSystem(callback, opts?)` | Registers a system that runs every frame. `callback(dt)` receives delta time in seconds. |
+| `useSystem(callback, opts?)` | Registers a system that runs every frame. `opts.phase` sets the execution phase (default: `Phase.Simulation`). |
 | `useQuery(filter)` | Returns a live array of entities matching the given component filter. |
 | `useFacet(componentType)` | Returns a reactive reference to a component on the nearest ancestor entity. |
-| `useSpawn()` | Returns a function to dynamically spawn entity JSX into the world. |
+| `useSpawn()` | Returns a function to dynamically spawn entities. Takes `{ name?, components }`. |
 | `useEvent(eventType)` | Returns an emit function for the given event type. |
 | `useEventListener(eventType, handler)` | Subscribes to events. `handler(event, self)` is called per event. |
 | `useEntityLifecycle(hooks)` | Registers `onInit` / `onDestroy` callbacks for the enclosing entity. |
+| `useComponentLifecycle(type, hooks)` | Registers `onAdd` / `onRemove` hooks for a component type across all entities. |
 | `useWorld()` | Returns the raw world instance for advanced use cases. |
+| `useEntity()` | Returns the current entity from context (inside `<Entity>`). Used in behaviors. |
+
+### Constants
+
+| Export | Description |
+|---|---|
+| `Phase` | Execution phases: `Input`, `Spawn`, `Simulation`, `PostSimulation`, `Render`, `Cleanup`. |
 
 ### Utilities
 
@@ -555,34 +791,47 @@ export default TopDownShooter;
 ## Architecture
 
 ```
-┌─────────── World ───────────┐
-│                              │
-│  ┌── Entity ──┐  ┌── Entity ──┐
-│  │ Component  │  │ Component  │
-│  │ Component  │  │ Component  │
-│  └────────────┘  └────────────┘
-│                              │
-│  ┌── Systems ─────────────┐  │
-│  │  sorted by priority    │  │
-│  │  ┌─────────────────┐   │  │
-│  │  │ useSystem(fn)   │──▶│──│──▶ queries matching entities
-│  │  └─────────────────┘   │  │    mutates component data
-│  └────────────────────────┘  │
-│                              │
-│  Event Bus                   │
-│  useEvent() ──▶ useEventListener()
-│                              │
-│  Game Loop (requestAnimationFrame)
-│  dt ──▶ systems ──▶ React re-render
-└──────────────────────────────┘
+┌──────────────── World ────────────────┐
+│                                        │
+│  ┌── Entity ──────────┐  ┌── Entity ──────────┐
+│  │ Component (data)   │  │ Component (data)   │
+│  │ Component (data)   │  │ Component (data)   │
+│  │ Behavior (logic)   │  │ Behavior (logic)   │
+│  │ Behavior (logic)   │  │ Behavior (logic)   │
+│  └────────────────────┘  └────────────────────┘
+│                                        │
+│  ┌── Phases (execution order) ─────┐   │
+│  │  Input                          │   │
+│  │  Spawn                          │   │
+│  │  Simulation                     │   │
+│  │  PostSimulation                 │   │
+│  │  Render                         │   │
+│  │  Cleanup                        │   │
+│  └─────────────────────────────────┘   │
+│                                        │
+│  Systems + behaviors register into     │
+│  phases and execute in phase order.    │
+│                                        │
+│  Component Hooks                       │
+│  onComponentAdd / onComponentRemove    │
+│                                        │
+│  Event Bus                             │
+│  useEvent() ──▶ useEventListener()     │
+│                                        │
+│  Game Loop (requestAnimationFrame)     │
+│  dt ──▶ phases ──▶ events ──▶ render  │
+└────────────────────────────────────────┘
 ```
 
 Each frame:
-1. **Input** is captured and written to input components.
-2. **Systems** execute in priority order, mutating component data.
-3. **React** re-renders any facets or queries whose data changed.
-4. **Events** dispatched during the frame are delivered to listeners.
-5. **Destroyed entities** are cleaned up after all systems finish.
+1. **Input** phase — capture input, poll controllers.
+2. **Spawn** phase — create new entities.
+3. **Simulation** phase — AI, physics, movement. Batch systems iterate all matching entities; behaviors operate on their own entity.
+4. **PostSimulation** phase — energy drain, scoring, reactions to simulation.
+5. **Render** phase — draw the frame.
+6. **Cleanup** phase — destroy expired entities, fire `onDestroy` callbacks.
+7. **Events** dispatched during the frame are delivered to listeners.
+8. **React** re-renders any facets or queries whose data changed.
 
 ## License
 

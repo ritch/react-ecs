@@ -1,12 +1,14 @@
 export {
   defineComponent,
   defineEvent,
+  Phase,
   WorldInstance,
   EntityInstance,
   EventBus,
   getComponentId,
   type ComponentDef,
   type EventDef,
+  type PhaseName,
   type QueryFilter,
   type SystemCallback,
 } from './core';

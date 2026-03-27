@@ -167,6 +167,19 @@ export type QueryFilter =
   | unknown[]
   | { all?: unknown[]; none?: unknown[]; any?: unknown[] };
 
+// --- Phases ---
+
+export const Phase = {
+  Input:          0,
+  Spawn:          100,
+  Simulation:     200,
+  PostSimulation: 300,
+  Render:         400,
+  Cleanup:        500,
+} as const;
+
+export type PhaseName = keyof typeof Phase;
+
 // --- World ---
 
 export type SystemCallback = (dt: number) => void;
